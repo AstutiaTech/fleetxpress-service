@@ -3,6 +3,7 @@
 import { Controller, useForm } from "react-hook-form"
 import { CreateWarehousePayload, WareHouse } from "@/types/warehousesType"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useEffect, useState } from "react"
 
 import { ApiService } from "@/lib/api"
@@ -10,9 +11,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Loader2 } from "lucide-react"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { toastUtils } from "@/utils/toast-utils"
+import { StaffUser } from "@/types/staffTypes"
 import { WarehouseType } from "@/types/warehouseTypeTypes"
+import { toastUtils } from "@/utils/toast-utils"
 import { useStore } from "@/providers/store.provider"
 
 interface WarehouseModalProps {
@@ -29,6 +30,8 @@ export function WarehouseModal({ open, onOpenChange, item, onSuccess }: Warehous
     const [states, setStates] = useState<{ id: number; name: string }[]>([])
     const [cities, setCities] = useState<{ id: number; name: string; stateId: number }[]>([])
     const [lgas, setLgas] = useState<{ id: number; name: string; stateId: number }[]>([])
+    const [managers, setManagers] = useState<StaffUser[]>([])
+    const [isManagersLoading, setIsManagersLoading] = useState(false)
     const [selectedStateId, setSelectedStateId] = useState<number | null>(null)
 
     const { control, handleSubmit, reset, formState: { errors, isValid }, watch } = useForm<CreateWarehousePayload>({
@@ -51,11 +54,11 @@ export function WarehouseModal({ open, onOpenChange, item, onSuccess }: Warehous
     })
 
     const watchedState = watch("state")
-
     useEffect(() => {
         if (open) {
             loadWarehouseTypes()
             loadStates()
+            loadManagers()
         }
     }, [open])
 
@@ -154,6 +157,20 @@ export function WarehouseModal({ open, onOpenChange, item, onSuccess }: Warehous
             }
         } catch {
             console.error("Failed to load LGAs")
+        }
+    }
+
+    const loadManagers = async () => {
+        setIsManagersLoading(true)
+        try {
+            const response = await ApiService.getAllStaff({ limit: 1000 })
+            if (response.status && response.data) {
+                setManagers(response.data.filter((staff) => staff.staff?.role === "admin" && staff.status === 1))
+            }
+        } catch {
+            toastUtils.error("Failed to Load", "Unable to fetch managers.")
+        } finally {
+            setIsManagersLoading(false)
         }
     }
 
@@ -438,14 +455,46 @@ export function WarehouseModal({ open, onOpenChange, item, onSuccess }: Warehous
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label>Manager ID *</Label>
+                            <Label>Manager *</Label>
                             <Controller
                                 control={control}
                                 name="managerId"
-                                rules={{ required: "Manager ID is required" }}
+                                rules={{ required: "Manager is required" }}
                                 render={({ field }) => (
                                     <>
-                                        <Input {...field} placeholder="Manager ID" />
+                                        <Select
+                                            value={field.value}
+                                            onValueChange={field.onChange}
+                                            disabled={isManagersLoading}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue
+                                                    placeholder={
+                                                        isManagersLoading
+                                                            ? "Loading managers..."
+                                                            : "Select manager"
+                                                    }
+                                                />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {managers.map((manager) => {
+                                                    const fullName = `${manager.profile?.firstName || ""} ${manager.profile?.lastName || ""}`.trim()
+                                                    const label = fullName || manager.email
+                                                    const staffId = manager.staff?.id
+                                                    if (!staffId) return null
+                                                    return (
+                                                        <SelectItem key={staffId} value={staffId}>
+                                                            {label}
+                                                        </SelectItem>
+                                                    )
+                                                })}
+                                                {field.value && !managers.some((manager) => manager.staff?.id === field.value) && (
+                                                    <SelectItem value={field.value}>
+                                                        {`Current manager (${field.value})`}
+                                                    </SelectItem>
+                                                )}
+                                            </SelectContent>
+                                        </Select>
                                         {errors.managerId && (
                                             <p className="text-sm text-destructive">{errors.managerId.message}</p>
                                         )}
