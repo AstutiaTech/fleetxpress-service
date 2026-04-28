@@ -2,36 +2,19 @@ import axios from "axios"
 import { rootStore } from "@/stores/root-store"
 import { toastUtils } from "@/utils/toast-utils"
 
-// Create a storage service that uses localStorage or sessionStorage based on rememberMe preference
 const storageService = {
-  getStorage: (): Storage | null => {
-    if (typeof window === "undefined") return null
-    const rememberMe = localStorage.getItem("rememberMe") === "true"
-    return rememberMe ? localStorage : sessionStorage
-  },
-
   getToken: () => {
     if (typeof window === "undefined") return null
-    const storage = storageService.getStorage()
-    if (!storage) return null
-    const tokens = storage.getItem("auth_tokens")
+    const tokens = localStorage.getItem("auth_tokens")
     return tokens ? JSON.parse(tokens) : null
-  },
-
-  setToken: (tokens: string) => {
-    if (typeof window === "undefined") return
-    const storage = storageService.getStorage()
-    if (!storage) return
-    storage.setItem("auth_tokens", JSON.stringify(tokens))
   },
 
   clearToken: () => {
     if (typeof window === "undefined") return
-    // Clear from both storages to be safe
     localStorage.removeItem("auth_tokens")
-    sessionStorage.removeItem("auth_tokens")
   },
 }
+let isHandlingUnauthorized = false
 
 const url =
   process.env.NODE_ENV === "development"
@@ -103,15 +86,18 @@ axiosInstance.interceptors.response.use(
   async (error) => {
     // If error is 401 Unauthorized and we haven't tried to refresh the token yet
     if (error.response?.status === 401) {
-      // Only handle logout/redirect if we're not already on the login page
-      // This prevents redirect loops
-      if (typeof window !== "undefined" && window.location.pathname !== "/login") {
-      // log the user out
-      rootStore.authStore.logout()
-      toastUtils.error("Session Expired", "Please log in again")
-      storageService.clearToken()
-        // Use replace instead of href to avoid adding to history
-        window.location.replace("/login")
+      if (!isHandlingUnauthorized) {
+        isHandlingUnauthorized = true
+        await rootStore.authStore.logout(true)
+        storageService.clearToken()
+
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          toastUtils.error("Session Expired", "Please log in again")
+          // Use replace instead of href to avoid adding to history
+          window.location.replace("/login")
+        }
+
+        isHandlingUnauthorized = false
       }
     }
 

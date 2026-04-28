@@ -2,25 +2,22 @@
 
 import { Mail, User } from "lucide-react"
 import { useEffect, useState } from "react"
-import { usePathname, useRouter } from "next/navigation"
+import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
 import Image from "next/image"
 import { Input } from "@/components/ui/input"
 import { OTPInput } from "@/components/otp-input"
-import { Switch } from "@/components/ui/switch"
 import { buildImageUrl } from "@/lib/utils"
 import { observer } from "mobx-react-lite"
 import { useStore } from "@/providers/store.provider"
 
 export default observer(function LoginPage() {
   const router = useRouter()
-  const pathname = usePathname()
   const { authStore, settingsStore } = useStore()
   const [email, setEmail] = useState("")
   const [otp, setOtp] = useState("")
   const [step, setStep] = useState<"email" | "otp">("email")
-  const [rememberMe, setRememberMe] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
   const [resendCountdown, setResendCountdown] = useState(0)
   const [imageError, setImageError] = useState(false)
@@ -36,22 +33,6 @@ export default observer(function LoginPage() {
   useEffect(() => {
     setImageError(false)
   }, [settingsStore.logo])
-
-  // Redirect if already authenticated - but let auth guard handle navigation after login
-  useEffect(() => {
-    // Only auto-redirect if we're on login page and authenticated
-    // This prevents conflicts with auth guard
-    if (authStore.isAuthenticated && pathname === "/login") {
-      // const redirectPath = authStore.redirectAfterLogin || "/dashboard"
-      // // Use replace to avoid adding to history and prevent loops
-      // router.replace(redirectPath)
-      // // Clear the redirect path after using it
-      // if (authStore.redirectAfterLogin) {
-      //   authStore.setRedirectAfterLogin("/dashboard")
-      // }
-      window.location.replace("/dashboard")
-    }
-  }, [authStore.isAuthenticated, pathname, router])
 
   // Countdown timer for resend OTP
   useEffect(() => {
@@ -83,7 +64,7 @@ export default observer(function LoginPage() {
     if (otp.length !== 4) return
 
     setIsLoading(true)
-    const result = await authStore.verifyOTP(otp, rememberMe)
+    const result = await authStore.verifyOTP(otp)
     setIsLoading(false)
 
     if (result.success) {
@@ -226,25 +207,6 @@ export default observer(function LoginPage() {
                   </Button>
                 </div>
               )}
-
-              {/* Remember Me & Forgot Password */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id="remember-me"
-                    checked={rememberMe}
-                    onCheckedChange={setRememberMe}
-                    className="data-[state=checked]:bg-primary data-[state=checked]:border-primary data-[state=unchecked]:border-black data-[state=unchecked]:bg-black"
-                    thumbClassName="data-[state=checked]:bg-white data-[state=unchecked]:border-primary"
-                  />
-                  <label
-                    htmlFor="remember-me"
-                    className="text-sm text-gray-700 cursor-pointer select-none"
-                  >
-                    Remember me
-                  </label>
-                </div>
-              </div>
 
               {/* Login Button */}
               <Button
