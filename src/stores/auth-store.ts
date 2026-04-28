@@ -5,7 +5,6 @@ import { makeAutoObservable, runInAction } from "mobx"
 import { ApiService } from "@/lib/api"
 import { ROLE_PERMISSIONS } from "@/config/menu"
 import type { RootStore } from "./root-store"
-import { decrypt } from "@/lib/encryption"
 import { getApiErrorMessage, getErrorMessage, toastUtils } from "@/utils/toast-utils"
 
 export class AuthStore {
@@ -24,7 +23,6 @@ export class AuthStore {
   otpSent: boolean
   otpVerifying: boolean
   email: string | null
-  rememberMe: boolean
 
   constructor(rootStore: RootStore) {
     this.rootStore = rootStore
@@ -42,37 +40,20 @@ export class AuthStore {
     this.otpSent = false
     this.otpVerifying = false
     this.email = null
-    this.rememberMe = false
 
     makeAutoObservable(this, {
       rootStore: false,
     })
 
-    // Load rememberMe preference from localStorage
-    if (typeof window !== "undefined") {
-      const storedRememberMe = localStorage.getItem("rememberMe")
-      this.rememberMe = storedRememberMe === "true"
-    }
-
-    // Create a custom storage adapter that routes based on rememberMe preference
-    const storageAdapter = typeof window !== "undefined" ? this.createStorageAdapter() : undefined
-
     makePersistable(this, {
       name: "AuthStore",
-      properties: ["isAuthenticated", "user", "profile", "staff", "role", "permissions", "tokens", "rememberMe"],
-      storage: storageAdapter,
+      properties: ["isAuthenticated", "user", "profile", "staff", "role", "permissions", "tokens"],
+      storage: typeof window !== "undefined" ? window.localStorage : undefined,
     })
 
     // Listen for storage changes from other tabs to sync auth state
-    // Note: Storage events only fire for localStorage, not sessionStorage
-    // This means cross-tab syncing only works when rememberMe is true (localStorage)
-    // When rememberMe is false (sessionStorage), sessions are tab-specific (by design)
     if (typeof window !== "undefined") {
       window.addEventListener("storage", (e) => {
-        // Only sync if rememberMe is enabled (localStorage)
-        const rememberMe = localStorage.getItem("rememberMe") === "true"
-        if (!rememberMe) return // Skip syncing if using sessionStorage (tab-specific)
-        
         if (e.key === "AuthStore") {
           if (e.newValue) {
             // Reload auth state from storage when it changes in another tab
@@ -86,7 +67,6 @@ export class AuthStore {
                 this.role = storedData.role ?? null
                 this.permissions = storedData.permissions ?? []
                 this.tokens = storedData.tokens ?? null
-                this.rememberMe = storedData.rememberMe ?? false
               })
             } catch (error) {
               console.error("Error syncing auth state from storage:", error)
@@ -119,43 +99,9 @@ export class AuthStore {
     }
   }
 
-  // Create a storage adapter that routes to localStorage or sessionStorage based on rememberMe
-  private createStorageAdapter() {
-    return {
-      getItem: (key: string): string | null => {
-        // Check rememberMe preference dynamically
-        const rememberMe = typeof window !== "undefined" ? localStorage.getItem("rememberMe") === "true" : false
-        const storage = rememberMe ? localStorage : sessionStorage
-        return storage.getItem(key)
-      },
-      setItem: (key: string, value: string): void => {
-        // Check rememberMe preference dynamically
-        const rememberMe = typeof window !== "undefined" ? localStorage.getItem("rememberMe") === "true" : false
-        const storage = rememberMe ? localStorage : sessionStorage
-        storage.setItem(key, value)
-      },
-      removeItem: (key: string): void => {
-        // Remove from both storages to be safe
-        if (typeof window !== "undefined") {
-          localStorage.removeItem(key)
-          sessionStorage.removeItem(key)
-        }
-      },
-    }
-  }
-
-  // Get the appropriate storage based on rememberMe preference
-  private getStorage(): Storage | null {
-    if (typeof window === "undefined") return null
-    return this.rememberMe ? localStorage : sessionStorage
-  }
-
   syncTokensWithStorage() {
     if (this.tokens && typeof window !== "undefined") {
-      const storage = this.getStorage()
-      if (storage) {
-        storage.setItem("auth_tokens", JSON.stringify(this.tokens))
-      }
+      localStorage.setItem("auth_tokens", JSON.stringify(this.tokens))
     }
   }
 
@@ -164,6 +110,20 @@ export class AuthStore {
   }
 
   async hydrate() { }
+
+  private isTokenExpired(token: string): boolean {
+    try {
+      const [, payload] = token.split(".")
+      if (!payload) return false
+      const normalized = payload.replace(/-/g, "+").replace(/_/g, "/")
+      const decoded = JSON.parse(atob(normalized))
+      if (!decoded?.exp || typeof decoded.exp !== "number") return false
+      return decoded.exp * 1000 <= Date.now()
+    } catch {
+      // If token is not JWT-shaped, fall back to backend validation on request.
+      return false
+    }
+  }
 
   setRedirectAfterLogin(path: string) {
     this.redirectAfterLogin = path
@@ -201,7 +161,7 @@ export class AuthStore {
     }
   }
 
-  async verifyOTP(otp: string, rememberMe: boolean = false) {
+  async verifyOTP(otp: string) {
     if (!this.pendingEmail) {
       return { success: false, error: "No pending email verification" }
     }
@@ -216,11 +176,6 @@ export class AuthStore {
       })
       if (response.status) {
         const data = response.data;
-        
-        // Store rememberMe preference
-        if (typeof window !== "undefined") {
-          localStorage.setItem("rememberMe", rememberMe.toString())
-        }
         
         // Determine role: if staff is null or userType is 2, treat as customer
         let role: UserRole = "customer";
@@ -254,7 +209,6 @@ export class AuthStore {
           this.role = role
           this.permissions = rolePermissions.map((p) => ({ ...p, actions: [...p.actions] }))
           this.tokens = data.access_token
-          this.rememberMe = rememberMe
           this.pendingEmail = null
           this.otpSent = false
           this.otpVerifying = false
@@ -293,10 +247,9 @@ export class AuthStore {
     this.error = null
   }
 
-  async logout() {
+  async logout(silent = false) {
     try {
       this.isLoading = true
-      await new Promise((resolve) => setTimeout(resolve, 500))
       runInAction(() => {
         this.isAuthenticated = false
         this.user = null
@@ -311,14 +264,13 @@ export class AuthStore {
         this.error = null
         this.redirectAfterLogin = "/dashboard" // Reset redirect path to prevent loops
         if (typeof window !== "undefined") {
-          // Clear from both storages to be safe
           localStorage.removeItem("auth_tokens")
-          sessionStorage.removeItem("auth_tokens")
           localStorage.removeItem("AuthStore")
-          sessionStorage.removeItem("AuthStore")
         }
       })
-      toastUtils.info("Logged Out", "You have been successfully logged out.")
+      if (!silent) {
+        toastUtils.info("Logged Out", "You have been successfully logged out.")
+      }
       return { success: true, error: null }
     } catch (error) {
       const errorMessage = getErrorMessage(error, "An error occurred while logging out")
@@ -331,7 +283,16 @@ export class AuthStore {
   }
 
   async checkSession() {
-    return this.isAuthenticated && !!this.tokens
+    if (!this.isAuthenticated || !this.tokens) {
+      return false
+    }
+
+    if (this.isTokenExpired(this.tokens)) {
+      await this.logout(true)
+      return false
+    }
+
+    return true
   }
 
   hasPermission(resource: PermissionResource, action: PermissionAction): boolean {
